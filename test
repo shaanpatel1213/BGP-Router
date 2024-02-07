@@ -5,8 +5,8 @@ import subprocess
 import sys
 import re
 
-EXECUTABLE_NAME = "3700router.py"
-RUN_SCRIPT_NAME = "run.py"
+EXECUTABLE_NAME = "3700router"
+RUN_SCRIPT_NAME = "run"
 CONFIG_DIR = "configs"
 
 def die(message):
