@@ -4,6 +4,7 @@ import argparse, socket, time, json, select, struct, sys, math
 
 class Router:
 
+    routing_table = {}
     relations = {}
     sockets = {}
     ports = {}
@@ -28,6 +29,17 @@ class Router:
     def send(self, network, message):
         self.sockets[network].sendto(message.encode('utf-8'), ('localhost', self.ports[network]))
 
+    def process_update(self, srcif, update_message):
+        for network, next_hop in update_message.items():
+            self.routing_table[network] = (next_hop, self.ports[srcif])
+            self.forward_update(srcif, update_message)
+
+    def forward_update(self, source, update_message):
+        for neighbor in self.sockets.keys():
+            if neighbor != source:  # Don't send back to the source
+                self.send(neighbor, json.dumps(update_message))
+                print(f"Forwarded update to neighbor {neighbor}")
+
     def run(self):
         while True:
             socks = select.select(self.sockets.values(), [], [], 0.1)[0]
@@ -41,7 +53,11 @@ class Router:
                 msg = k.decode('utf-8')
 
                 print("Received message '%s' from %s" % (msg, srcif))
-        return
+                # Check if the message is a route update
+
+                if json.loads(msg).get("type") == "update":
+                    self.process_update(srcif, msg["msg"])
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='route packets')
