@@ -33,6 +33,7 @@ class Router:
         for network, next_hop in update_message.items():
             self.routing_table[network] = (next_hop, self.ports[srcif])
             self.forward_update(srcif, update_message)
+            print("this is the routing table", self.routing_table)
 
     def forward_update(self, source, update_message):
         for neighbor in self.sockets.keys():
@@ -54,9 +55,9 @@ class Router:
 
                 print("Received message '%s' from %s" % (msg, srcif))
                 # Check if the message is a route update
-
-                if json.loads(msg).get("type") == "update":
-                    self.process_update(srcif, msg["msg"])
+                msg = json.loads(msg)
+                if msg.get("type") == "update":
+                    self.process_update(srcif, msg)
 
 
 if __name__ == "__main__":
