@@ -21,18 +21,51 @@ class Router:
             self.relations[neighbor] = relation
             self.send(neighbor, json.dumps({ "type": "handshake", "src": self.our_addr(neighbor), "dst": neighbor, "msg": {}  }))
 
+    def convert_netmask_to_cidr(self, netmask):
+        return sum(bin(int(x)).count('1') for x in netmask.split('.'))
+    
+    def find_longest_prefix_match_route(self, dest):
+        dest_ip_binary = bin(int(''.join(format(int(octet), '08b') for octet in dest.split('.')), 2))
+
+        longest_prefix = None
+        longest_prefix_length = 0
+
+        for cidr in self.routing_table.keys():
+            network_addr, netmask_num = cidr.split("/")
+            network_binary = bin(int(''.join(format(int(octet), '08b') for octet in network_addr.split('.')), 2))
+
+            bits_in_common = 0
+            for i in range(min(len(dest_ip_binary), len(network_binary))):
+                if dest_ip_binary[i] == network_binary[i]:
+                    bits_in_common += 1
+                else:
+                    break
+        
+            if bits_in_common > longest_prefix_length and bits_in_common >= int(netmask_num):
+                longest_prefix = cidr
+                longest_prefix_length = bits_in_common
+
+        return longest_prefix
+
     def our_addr(self, dst):
         quads = list(int(qdn) for qdn in dst.split('.'))
         quads[3] = 1
         return "%d.%d.%d.%d" % (quads[0], quads[1], quads[2], quads[3])
 
     def send(self, network, message):
+        print("Sockets:", self.sockets)
+        print("current routing table:", self.routing_table)
         #print('sending to network:', network)
         #print('sockets[network]:', self.sockets[network])
         #self.sockets[network].sendto(modified.encode('utf-8'), ('localhost', self.ports[network]))
+        print("network:", network)
         self.sockets[network].sendto(message.encode('utf-8'), ('localhost', self.ports[network]))
 
     def process_update(self, srcif, update_message):
+        ip_and_netmask_cidr = update_message["msg"]["network"] + "/" + str(self.convert_netmask_to_cidr(update_message["msg"]["netmask"]))
+        print("IP and Netmask Cidr:", ip_and_netmask_cidr)
+        self.routing_table[ip_and_netmask_cidr] = {"localPref": update_message["msg"]["localpref"], "selfOrigin": update_message["msg"]["selfOrigin"], "origin": update_message["msg"]["origin"]}
+        print("Routing table:", self.routing_table)
         #print('process_update update_message received:', update_message)
         sendout_message_test = {
             "src": self.our_addr(srcif),
@@ -107,10 +140,18 @@ class Router:
                 if msg.get("type") == "update":
                     #print('kb update message:', msg)
                     self.process_update(srcif, msg)
-                if msg.get("type") == "dump":
+                elif msg.get("type") == "dump":
                     dumped_msg = json.dumps(self.routing_table)
                     #print('dumped_msg:', dumped_msg)
                     self.send(msg['src'], dumped_msg)
+                elif msg["type"] == "data":
+                    print("Message:", msg)
+                    router_to_send_to = self.find_longest_prefix_match_route(msg["dst"])
+                    if router_to_send_to is not None:
+                        print("Router to send to: ", router_to_send_to)
+                        self.send(router_to_send_to, msg)
+                    else:
+                        print("Couldn't find router to send to")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='route packets')
