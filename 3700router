@@ -24,6 +24,8 @@ class Router:
     def convert_netmask_to_cidr(self, netmask):
         return sum(bin(int(x)).count('1') for x in netmask.split('.'))
     
+    # TODO - make sure that this returns multiple longest prefix match routes in the case that multiple work, then we'll use other rules to get it fully working
+    # NOTE - this should be used before the tie breaking
     def find_longest_prefix_match_route(self, dest):
         dest_ip_binary = bin(int(''.join(format(int(octet), '08b') for octet in dest.split('.')), 2))
 
@@ -59,12 +61,13 @@ class Router:
         #print('sockets[network]:', self.sockets[network])
         #self.sockets[network].sendto(modified.encode('utf-8'), ('localhost', self.ports[network]))
         print("network:", network)
+        print("Message: ", message)
         self.sockets[network].sendto(message.encode('utf-8'), ('localhost', self.ports[network]))
 
     def process_update(self, srcif, update_message):
         ip_and_netmask_cidr = update_message["msg"]["network"] + "/" + str(self.convert_netmask_to_cidr(update_message["msg"]["netmask"]))
         print("IP and Netmask Cidr:", ip_and_netmask_cidr)
-        self.routing_table[ip_and_netmask_cidr] = {"localPref": update_message["msg"]["localpref"], "selfOrigin": update_message["msg"]["selfOrigin"], "origin": update_message["msg"]["origin"]}
+        self.routing_table[ip_and_netmask_cidr] = {"localpref": update_message["msg"]["localpref"], "selfOrigin": update_message["msg"]["selfOrigin"], "origin": update_message["msg"]["origin"], "peer": update_message["src"], "ASPath": update_message["msg"]["ASPath"], "network": update_message["msg"]["network"], "netmask": update_message["msg"]["netmask"]}
         print("Routing table:", self.routing_table)
         #print('process_update update_message received:', update_message)
         sendout_message_test = {
@@ -106,8 +109,7 @@ class Router:
         '''
         #print('sendout_message before sending:', sendout_message_test)
         #self.forward_update(srcif, sendout_message_test)
-        #print("this is the routing table", self.routing_table)
-        
+        #print("this is the routing table", self.routing_table)        
 
     def forward_update(self, source, update_message):
         #print('kb source:', source)
@@ -119,6 +121,66 @@ class Router:
                 update_message['dst'] = neighbor
                 self.send(neighbor, json.dumps(update_message))
                 print(f"Forwarded update to neighbor {neighbor}")
+
+
+    def process_dump(self, dst):
+        routing_table_entries = []
+        for value in self.routing_table.values():
+            routing_table_entries.append(value)
+                
+        table_msg = {
+            "src": self.our_addr(dst),
+            "dst": dst,
+            "type": "table",
+            "msg": routing_table_entries
+        }
+
+        self.send(dst, json.dumps(table_msg))
+
+    def get_highest_localpref_networks(self):
+        highest_local_prefs = []
+        highest_local_pref_value = -1
+        for key, value in self.routing_table.items():
+            if value["localpref"] > highest_local_pref_value:
+                highest_local_prefs.clear()
+                highest_local_prefs.append(key)
+                highest_local_pref_value = value["localpref"]
+            elif value["localpref"] == highest_local_pref_value:
+                highest_local_prefs.append(key)
+        return highest_local_prefs
+
+    # NOTE - whenever this function is used, check if the array size is > 1 (meaning more than 1 true) or == 0 (all false)
+    def get_true_selfOrigin_networks(self):
+        selfOrigin_true_networks = []
+        for key, value in self.routing_table.items():
+            if value["selfOrigin"] is True:
+                selfOrigin_true_networks.append(key)
+        return selfOrigin_true_networks
+    
+    def get_shortest_ASPath_networks(self):
+        shortest_ASPath_networks = []
+        shortest_ASPath_length = float("inf")
+        for key, value in self.routing_table.items():
+            if len(value["ASPath"]) < shortest_ASPath_length:
+                shortest_ASPath_networks.clear()
+                shortest_ASPath_networks.append(key)
+                shortest_ASPath_length = len(value["ASPath"])
+        return shortest_ASPath_networks
+    
+    # TODO - finish this function
+    def get_best_origin_networks(self):
+        return None
+    
+    # TODO - finish this function
+    def get_lowest_ip_network(self):
+        return None
+
+
+
+
+    # NOTE - this should be done after longest route prefix matching, but we won't include that for now
+    #def get_best_network(self, dst):
+
 
     def run(self):
         while True:
@@ -137,19 +199,23 @@ class Router:
 
                 # Check if the message is a route update
                 msg = json.loads(msg)
+                print("Message (line 141):", msg)
                 if msg.get("type") == "update":
                     #print('kb update message:', msg)
                     self.process_update(srcif, msg)
                 elif msg.get("type") == "dump":
-                    dumped_msg = json.dumps(self.routing_table)
+                    #dumped_msg = json.dumps(self.routing_table)
+                    self.process_dump(msg['src'])
                     #print('dumped_msg:', dumped_msg)
-                    self.send(msg['src'], dumped_msg)
+                    #self.send(msg['src'], dumped_msg)
                 elif msg["type"] == "data":
                     print("Message:", msg)
-                    router_to_send_to = self.find_longest_prefix_match_route(msg["dst"])
-                    if router_to_send_to is not None:
-                        print("Router to send to: ", router_to_send_to)
-                        self.send(router_to_send_to, msg)
+                    cidr_addr = self.find_longest_prefix_match_route(msg["dst"])
+                    if cidr_addr is not None:
+                        router_to_send_to = self.routing_table[cidr_addr]["peer"]
+                        print("CIDR Address: ", cidr_addr)
+                        print("Message (line 155):", msg)
+                        self.send(router_to_send_to, json.dumps(msg))
                     else:
                         print("Couldn't find router to send to")
 
