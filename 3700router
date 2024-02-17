@@ -135,7 +135,7 @@ class Router:
             "type": "table",
             "msg": routing_table_entries
         }
-
+        print("this is the dump sent : ", table_msg, "ends here")
         self.send(dst, json.dumps(table_msg))
 
     def get_highest_localpref_networks(self):
@@ -174,7 +174,13 @@ class Router:
     
     # TODO - finish this function
     def get_lowest_ip_network(self):
-        return None
+        lowest_ip = []
+        lowest = float("inf")
+        for key, value in self.routing_table.items():
+            if value["network"].replace('.', '') < lowest:
+                lowest_ip.clear()
+                lowest_ip.append(value["network"])
+        return lowest_ip
 
 
 
