@@ -70,6 +70,7 @@ class Router:
         self.routing_table[ip_and_netmask_cidr] = {"localpref": update_message["msg"]["localpref"], "selfOrigin": update_message["msg"]["selfOrigin"], "origin": update_message["msg"]["origin"], "peer": update_message["src"], "ASPath": update_message["msg"]["ASPath"], "network": update_message["msg"]["network"], "netmask": update_message["msg"]["netmask"]}
         print("Routing table:", self.routing_table)
         #print('process_update update_message received:', update_message)
+
         sendout_message_test = {
             "src": self.our_addr(srcif),
             "dst": srcif,
@@ -81,7 +82,7 @@ class Router:
                 #"localpref": update_message["msg"]["localpref"],
                 #"selfOrigin": update_message["msg"]["selfOrigin"],
                 # TODO - see if [0] is a problem and needs to be fixed
-                "ASPath": [self.asn, update_message["msg"]["ASPath"][0]],
+                "ASPath": [self.asn] + update_message["msg"]["ASPath"]
                 #"origin": update_message["msg"]["origin"]     # Examples: [1] or [3, 4] or [1, 4, 3]
             }
         }
