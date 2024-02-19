@@ -138,10 +138,12 @@ class Router:
         print("this is the dump sent : ", table_msg, "ends here")
         self.send(dst, json.dumps(table_msg))
 
-    def get_highest_localpref_networks(self):
+    
+    def get_highest_localpref_networks(self, networks):
         highest_local_prefs = []
         highest_local_pref_value = -1
-        for key, value in self.routing_table.items():
+        for key in networks:
+            value = self.routing_table.get(key)
             if value["localpref"] > highest_local_pref_value:
                 highest_local_prefs.clear()
                 highest_local_prefs.append(key)
@@ -151,42 +153,73 @@ class Router:
         return highest_local_prefs
 
     # NOTE - whenever this function is used, check if the array size is > 1 (meaning more than 1 true) or == 0 (all false)
-    def get_true_selfOrigin_networks(self):
+    def get_true_selfOrigin_networks(self, networks):
         selfOrigin_true_networks = []
-        for key, value in self.routing_table.items():
+        for key in networks:
+            value = self.routing_table.get(key) 
             if value["selfOrigin"] is True:
                 selfOrigin_true_networks.append(key)
         return selfOrigin_true_networks
     
-    def get_shortest_ASPath_networks(self):
+    def get_shortest_ASPath_networks(self, networks):
         shortest_ASPath_networks = []
         shortest_ASPath_length = float("inf")
-        for key, value in self.routing_table.items():
+        for key in networks:
+            value = self.routing_table.get(key)
             if len(value["ASPath"]) < shortest_ASPath_length:
                 shortest_ASPath_networks.clear()
                 shortest_ASPath_networks.append(key)
                 shortest_ASPath_length = len(value["ASPath"])
         return shortest_ASPath_networks
     
-    # TODO - finish this function
-    def get_best_origin_networks(self):
-        return None
+
+    def origin_priority(self, origin):
+        priority = {"IGP": 3, "EGP": 2, "UNK": 1}
+        return priority.get(origin, 0)
+
+
+    # TODO - check if this works, kind of funky
+    def get_best_origin_networks(self, networks):
+        highest_origin_item = max(networks, key=lambda x: self.origin_priority(self.routing_table.get(x)["origin"]))
+        highest_origin_value = self.origin_priority(highest_origin_item)
+
+        filtered_routes = [key for key in networks if self.origin_priority(self.routing_table.get(key)["origin"]) == highest_origin_value]
+        return filtered_routes
+
+
     
     # TODO - finish this function
-    def get_lowest_ip_network(self):
-        lowest_ip = []
+    def get_lowest_ip_networks(self, networks):
+        lowest_ip_networks = []
         lowest = float("inf")
-        for key, value in self.routing_table.items():
-            if value["network"].replace('.', '') < lowest:
-                lowest_ip.clear()
-                lowest_ip.append(value["network"])
-        return lowest_ip
+        for key in networks:
+            value = self.routing_table.get(key)
+            ip_as_int = value["peer"].replace('.', '')
+            if ip_as_int < lowest:
+                lowest_ip_networks.clear()
+                lowest_ip_networks.append(key)
+                lowest = ip_as_int
+            elif ip_as_int == lowest:
+                lowest_ip_networks.append(key)
+                
+        return lowest_ip_networks
 
 
 
 
     # NOTE - this should be done after longest route prefix matching, but we won't include that for now
-    #def get_best_network(self, dst):
+    def get_best_network(self, dst):
+        localpref_tie_break = self.get_highest_localpref_networks(self.routing_table)
+        selforigin_tie_break = self.get_true_selfOrigin_networks(localpref_tie_break)
+        shortest_aspath_tie_break = self.get_shortest_ASPath_networks(selforigin_tie_break)
+        best_origin_tie_break = self.get_best_origin_networks(shortest_aspath_tie_break)
+        lowest_ip_networks = self.get_lowest_ip_networks(best_origin_tie_break)
+
+        if (len(lowest_ip_networks) != 1):
+            print("Tie breaking failed")
+            return None
+        
+        return lowest_ip_networks[0]
 
 
     def run(self):
@@ -217,7 +250,8 @@ class Router:
                     #self.send(msg['src'], dumped_msg)
                 elif msg["type"] == "data":
                     print("Message:", msg)
-                    cidr_addr = self.find_longest_prefix_match_route(msg["dst"])
+                    cidr_addr = self.get_best_network()
+                    #cidr_addr = self.find_longest_prefix_match_route(msg["dst"])
                     if cidr_addr is not None:
                         router_to_send_to = self.routing_table[cidr_addr]["peer"]
                         print("CIDR Address: ", cidr_addr)
