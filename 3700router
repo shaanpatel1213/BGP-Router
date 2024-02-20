@@ -29,7 +29,7 @@ class Router:
     def find_longest_prefix_match_route(self, dest):
         dest_ip_binary = bin(int(''.join(format(int(octet), '08b') for octet in dest.split('.')), 2))
 
-        longest_prefix = None
+        longest_prefix_network = None
         longest_prefix_length = 0
 
         for cidr in self.routing_table.keys():
@@ -44,10 +44,13 @@ class Router:
                     break
         
             if bits_in_common > longest_prefix_length and bits_in_common >= int(netmask_num):
-                longest_prefix = cidr
+                longest_prefix_network = cidr
                 longest_prefix_length = bits_in_common
 
-        return longest_prefix
+            elif bits_in_common == longest_prefix_length and bits_in_common >= int(netmask_num):
+                longest_prefix_network = cidr
+
+        return longest_prefix_network
 
     def our_addr(self, dst):
         quads = list(int(qdn) for qdn in dst.split('.'))
@@ -55,19 +58,26 @@ class Router:
         return "%d.%d.%d.%d" % (quads[0], quads[1], quads[2], quads[3])
 
     def send(self, network, message):
-        print("Sockets:", self.sockets)
-        print("current routing table:", self.routing_table)
+        #print("Sockets:", self.sockets)
+        #print("current routing table:", self.routing_table)
         #print('sending to network:', network)
         #print('sockets[network]:', self.sockets[network])
         #self.sockets[network].sendto(modified.encode('utf-8'), ('localhost', self.ports[network]))
-        print("network:", network)
-        print("Message: ", message)
+        #print("network:", network)
+        #print("Message: ", message)
         self.sockets[network].sendto(message.encode('utf-8'), ('localhost', self.ports[network]))
 
     def process_update(self, srcif, update_message):
         ip_and_netmask_cidr = update_message["msg"]["network"] + "/" + str(self.convert_netmask_to_cidr(update_message["msg"]["netmask"]))
-        print("IP and Netmask Cidr:", ip_and_netmask_cidr)
-        self.routing_table[ip_and_netmask_cidr] = {"localpref": update_message["msg"]["localpref"], "selfOrigin": update_message["msg"]["selfOrigin"], "origin": update_message["msg"]["origin"], "peer": update_message["src"], "ASPath": update_message["msg"]["ASPath"], "network": update_message["msg"]["network"], "netmask": update_message["msg"]["netmask"]}
+        
+        # create tuple 
+        new_entry = (update_message["msg"]["localpref"], update_message["msg"]["selfOrigin"], update_message["msg"]["origin"], update_message["src"], update_message["msg"]["ASPath"], update_message["msg"]["network"], update_message["msg"]["netmask"])
+        value_list = self.routing_table.get(ip_and_netmask_cidr)
+        if value_list is None or not isinstance(self.routing_table[ip_and_netmask_cidr], list):
+            self.routing_table[ip_and_netmask_cidr] = []
+        
+        self.routing_table[ip_and_netmask_cidr].append(new_entry)
+        #{"localpref": update_message["msg"]["localpref"], "selfOrigin": update_message["msg"]["selfOrigin"], "origin": update_message["msg"]["origin"], "peer": update_message["src"], "ASPath": update_message["msg"]["ASPath"], "network": update_message["msg"]["network"], "netmask": update_message["msg"]["netmask"]}
         print("Routing table:", self.routing_table)
         #print('process_update update_message received:', update_message)
 
@@ -115,19 +125,23 @@ class Router:
     def forward_update(self, source, update_message):
         #print('kb source:', source)
         for neighbor in self.sockets.keys():
-            print('kb neighbor:', neighbor)
+            #print('kb neighbor:', neighbor)
             if neighbor != source:  # Don't send back to the source
                 #print('kb if statement valid:')
                 update_message['src'] = self.our_addr(neighbor)
                 update_message['dst'] = neighbor
                 self.send(neighbor, json.dumps(update_message))
-                print(f"Forwarded update to neighbor {neighbor}")
+                #print(f"Forwarded update to neighbor {neighbor}")
 
 
     def process_dump(self, dst):
         routing_table_entries = []
-        for value in self.routing_table.values():
-            routing_table_entries.append(value)
+
+        for value_list in self.routing_table.values():
+            for value_tuple in value_list:
+                #new_entry = (update_message["msg"]["localpref"], update_message["msg"]["selfOrigin"], update_message["msg"]["origin"], update_message["src"], update_message["msg"]["ASPath"], update_message["msg"]["network"], update_message["msg"]["netmask"])
+                table_as_dict = {"network" : value_tuple[5], "netmask" : value_tuple[6], "peer" : value_tuple[3], "localpref": value_tuple[0], "ASPath": value_tuple[4], "selfOrigin": value_tuple[1], "origin": value_tuple[2]}
+                routing_table_entries.append(table_as_dict)
                 
         table_msg = {
             "src": self.our_addr(dst),
@@ -135,41 +149,78 @@ class Router:
             "type": "table",
             "msg": routing_table_entries
         }
-        print("this is the dump sent : ", table_msg, "ends here")
+        #print("this is the dump sent : ", table_msg, "ends here")
         self.send(dst, json.dumps(table_msg))
 
     
-    def get_highest_localpref_networks(self, networks):
+    def get_highest_localpref_networks(self, tuple_list):
+        print("Tuple list size:", len(tuple_list))
         highest_local_prefs = []
         highest_local_pref_value = -1
-        for key in networks:
+        
+        # Because we first use longest prefix match routing, that narrows our search to only one network 
+        # we are iterating over all the tuples that fall under this CIDR address in the table
+        for value_tuple in tuple_list:
+            # value_tuple[0] accesses the localpref value
+            if value_tuple[0] > highest_local_pref_value:
+                highest_local_prefs.clear()
+                highest_local_prefs.append(value_tuple)
+                highest_local_pref_value = value_tuple[0]
+            elif value_tuple[0] == highest_local_pref_value:
+                highest_local_prefs.append(value_tuple)
+
+        print('highest local prefs length:', len(highest_local_prefs))
+        return highest_local_prefs
+
+
+        '''for key in networks:
+            print("key:", key)
             value = self.routing_table.get(key)
+            print("value:", value)
             if value["localpref"] > highest_local_pref_value:
                 highest_local_prefs.clear()
                 highest_local_prefs.append(key)
                 highest_local_pref_value = value["localpref"]
             elif value["localpref"] == highest_local_pref_value:
                 highest_local_prefs.append(key)
-        return highest_local_prefs
+        return highest_local_prefs'''
 
-    # NOTE - whenever this function is used, check if the array size is > 1 (meaning more than 1 true) or == 0 (all false)
-    def get_true_selfOrigin_networks(self, networks):
-        selfOrigin_true_networks = []
-        for key in networks:
-            value = self.routing_table.get(key) 
-            if value["selfOrigin"] is True:
-                selfOrigin_true_networks.append(key)
-        return selfOrigin_true_networks
     
-    def get_shortest_ASPath_networks(self, networks):
+    def get_true_selfOrigin_networks(self, tuple_list):
+        selfOrigin_false = []
+        selfOrigin_true = []
+        for value_tuple in tuple_list:
+            if value_tuple[1]:
+                selfOrigin_true.append(value_tuple)
+            else:
+                selfOrigin_false.append(value_tuple)
+            '''value = self.routing_table.get(key) 
+            if value["selfOrigin"] is True:
+                selfOrigin_true_networks.append(key)'''
+        
+        if len(selfOrigin_true) > 0:
+            return selfOrigin_true
+        else: 
+            return selfOrigin_false
+    
+    def get_shortest_ASPath_networks(self, tuple_list):
         shortest_ASPath_networks = []
         shortest_ASPath_length = float("inf")
-        for key in networks:
-            value = self.routing_table.get(key)
+        for value_tuple in tuple_list:
+            if len(value_tuple[4]) < shortest_ASPath_length:
+                shortest_ASPath_networks.clear()
+                shortest_ASPath_networks.append(value_tuple)
+                shortest_ASPath_length = len(value_tuple[4])
+            elif len(value_tuple[4]) == shortest_ASPath_length:
+                shortest_ASPath_networks.append(value_tuple)
+
+            '''value = self.routing_table.get(key)
             if len(value["ASPath"]) < shortest_ASPath_length:
                 shortest_ASPath_networks.clear()
                 shortest_ASPath_networks.append(key)
-                shortest_ASPath_length = len(value["ASPath"])
+                shortest_ASPath_length = len(value["ASPath"])'''
+        #print('Shortest ASPath networks:')
+        #print(*shortest_ASPath_networks, sep = ", ") 
         return shortest_ASPath_networks
     
 
@@ -179,19 +230,50 @@ class Router:
 
 
     # TODO - check if this works, kind of funky
-    def get_best_origin_networks(self, networks):
-        highest_origin_item = max(networks, key=lambda x: self.origin_priority(self.routing_table.get(x)["origin"]))
+    def get_best_origin_networks(self, tuple_list):
+        igp_list = []
+        egp_list = []
+        unk_list = []
+        print
+        for value_tuple in tuple_list:
+            if value_tuple[2] == "IGP":
+                igp_list.append(value_tuple)
+            elif value_tuple[2] == "EGP":
+                egp_list.append(value_tuple)
+            elif value_tuple[2] == "UNK":
+                unk_list.append(value_tuple)
+
+        if len(igp_list) > 0:
+            return igp_list
+        elif len(egp_list) > 0:
+            return egp_list
+        else:
+            return unk_list
+        '''highest_origin_item = max(networks, key=lambda x: self.origin_priority(self.routing_table.get(x)["origin"]))
         highest_origin_value = self.origin_priority(highest_origin_item)
 
         filtered_routes = [key for key in networks if self.origin_priority(self.routing_table.get(key)["origin"]) == highest_origin_value]
-        return filtered_routes
+        return filtered_routes'''
 
 
     
     # TODO - finish this function
-    def get_lowest_ip_networks(self, networks):
+    def get_lowest_ip_network(self, tuple_list):
+        
         lowest_ip_networks = []
         lowest = float("inf")
+        for value_tuple in tuple_list:
+            current_ip_as_int = int(value_tuple[3].replace('.', ''))
+            if current_ip_as_int < lowest:
+                lowest_ip_networks.clear()
+                lowest_ip_networks.append(value_tuple)
+                lowest = current_ip_as_int
+            elif current_ip_as_int == lowest:
+                lowest_ip_networks.append(value_tuple)
+        return lowest_ip_networks
+
+
+        '''
         for key in networks:
             value = self.routing_table.get(key)
             ip_as_int = value["peer"].replace('.', '')
@@ -203,22 +285,38 @@ class Router:
                 lowest_ip_networks.append(key)
                 
         return lowest_ip_networks
+        '''
 
 
 
 
     # NOTE - this should be done after longest route prefix matching, but we won't include that for now
-    def get_best_network(self, dst):
-        localpref_tie_break = self.get_highest_localpref_networks(self.routing_table)
-        selforigin_tie_break = self.get_true_selfOrigin_networks(localpref_tie_break)
-        shortest_aspath_tie_break = self.get_shortest_ASPath_networks(selforigin_tie_break)
-        best_origin_tie_break = self.get_best_origin_networks(shortest_aspath_tie_break)
-        lowest_ip_networks = self.get_lowest_ip_networks(best_origin_tie_break)
+    def get_best_network(self, tuples):
+        print("entered get_best_network")
+        localpref_tie_break = self.get_highest_localpref_networks(tuples)
+        if (len(localpref_tie_break) == 1):
+            return localpref_tie_break[0]
 
+        print('localpref_tie_break len:', len(localpref_tie_break))
+        selforigin_tie_break = self.get_true_selfOrigin_networks(localpref_tie_break)
+        if (len(selforigin_tie_break) == 1):
+            return selforigin_tie_break[0]
+        
+        shortest_aspath_tie_break = self.get_shortest_ASPath_networks(selforigin_tie_break)
+        if (len(shortest_aspath_tie_break) == 1):
+            return shortest_aspath_tie_break[0]
+        
+        best_origin_tie_break = self.get_best_origin_networks(shortest_aspath_tie_break)
+        if (len(best_origin_tie_break) == 1):
+            return best_origin_tie_break[0]
+        
+        lowest_ip_networks = self.get_lowest_ip_network(best_origin_tie_break)
+        
         if (len(lowest_ip_networks) != 1):
-            print("Tie breaking failed")
+            print("Tie breaking failed - lowest_ip_networks size:", len(lowest_ip_networks))
             return None
         
+        #print("Lowest ip network: ", lowest_ip_networks[0])
         return lowest_ip_networks[0]
 
 
@@ -231,7 +329,7 @@ class Router:
                 for sock in self.sockets:
                     if self.sockets[sock] == conn:
                         srcif = sock
-                        print('srcif:', srcif)
+                        #print('srcif:', srcif)
                         break
                 msg = k.decode('utf-8')
 
@@ -239,7 +337,7 @@ class Router:
 
                 # Check if the message is a route update
                 msg = json.loads(msg)
-                print("Message (line 141):", msg)
+                #print("Message (line 141):", msg)
                 if msg.get("type") == "update":
                     #print('kb update message:', msg)
                     self.process_update(srcif, msg)
@@ -249,16 +347,23 @@ class Router:
                     #print('dumped_msg:', dumped_msg)
                     #self.send(msg['src'], dumped_msg)
                 elif msg["type"] == "data":
-                    print("Message:", msg)
-                    cidr_addr = self.get_best_network()
-                    #cidr_addr = self.find_longest_prefix_match_route(msg["dst"])
-                    if cidr_addr is not None:
-                        router_to_send_to = self.routing_table[cidr_addr]["peer"]
-                        print("CIDR Address: ", cidr_addr)
-                        print("Message (line 155):", msg)
+                    #print("Message:", msg)
+                    #cidr_addr = self.get_best_network(msg["dst"])
+                    cidr_addr = self.find_longest_prefix_match_route(msg["dst"])
+                    if len(self.routing_table[cidr_addr]) == 1:
+                        #print("Only 1 address:", cidr_addrs[0])
+                        router_to_send_to = self.routing_table[cidr_addr][0][3]
+                        #print("CIDR Address: ", cidr_addrs[0])
+                        #print("Message (line 155):", msg)
                         self.send(router_to_send_to, json.dumps(msg))
+                    elif len(self.routing_table[cidr_addr]) > 1:
+                        tuple_list = self.routing_table[cidr_addr]
+                        best_network = self.get_best_network(tuple_list)
+                        router_to_send_to = best_network[3] #self.routing_table[best_network]["peer"]
+                        self.send(router_to_send_to, json.dumps(msg))
+                    # if cidr_addrs is None
                     else:
-                        print("Couldn't find router to send to")
+                        print("Couldn't find router to send to - error")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='route packets')
