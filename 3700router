@@ -8,6 +8,7 @@ class Router:
     relations = {}
     sockets = {}
     ports = {}
+    revocation_table= []
 
     def __init__(self, asn, connections):
         print("Router at AS %s starting up" % asn)
@@ -47,8 +48,8 @@ class Router:
                 longest_prefix_network = cidr
                 longest_prefix_length = bits_in_common
 
-            elif bits_in_common == longest_prefix_length and bits_in_common >= int(netmask_num):
-                longest_prefix_network = cidr
+            #elif bits_in_common == longest_prefix_length and bits_in_common >= int(netmask_num):
+               # longest_prefix_network = cidr
 
         return longest_prefix_network
 
@@ -91,7 +92,6 @@ class Router:
                 "netmask": update_message["msg"]["netmask"],
                 #"localpref": update_message["msg"]["localpref"],
                 #"selfOrigin": update_message["msg"]["selfOrigin"],
-                # TODO - see if [0] is a problem and needs to be fixed
                 "ASPath": [self.asn] + update_message["msg"]["ASPath"]
                 #"origin": update_message["msg"]["origin"]     # Examples: [1] or [3, 4] or [1, 4, 3]
             }
@@ -346,11 +346,15 @@ class Router:
                     self.process_dump(msg['src'])
                     #print('dumped_msg:', dumped_msg)
                     #self.send(msg['src'], dumped_msg)
+                elif msg["type"] == "withdraw":
+                    self.process_withdraw(srcif,msg)
                 elif msg["type"] == "data":
                     #print("Message:", msg)
                     #cidr_addr = self.get_best_network(msg["dst"])
                     cidr_addr = self.find_longest_prefix_match_route(msg["dst"])
-                    if len(self.routing_table[cidr_addr]) == 1:
+                    if cidr_addr not in self.routing_table:
+                        self.no_route(srcif, msg)
+                    elif len(self.routing_table[cidr_addr]) == 1:
                         #print("Only 1 address:", cidr_addrs[0])
                         router_to_send_to = self.routing_table[cidr_addr][0][3]
                         #print("CIDR Address: ", cidr_addrs[0])
@@ -364,6 +368,31 @@ class Router:
                     # if cidr_addrs is None
                     else:
                         print("Couldn't find router to send to - error")
+
+    def process_withdraw(self, srcif, msg):
+        for remove_entry in msg["msg"]:
+            ip_and_netmask_cidr = (remove_entry["network"] + "/" +
+                                   str(self.convert_netmask_to_cidr(remove_entry["netmask"])))
+            self.revocation_table.append(self.routing_table.pop(ip_and_netmask_cidr))
+
+        forward_message = {
+      "src":  self.our_addr(srcif) ,      # Example: 172.65.0.2
+      "dst":  srcif,   # Example: 172.65.0.1
+      "type": "withdraw",
+      "msg": msg["msg"]
+    }
+        self.forward_update(srcif, forward_message)
+
+    def no_route(self, srcif, msg):
+        themsg ={
+            "src": self.our_addr(srcif),  # Example: 172.65.0.1, i.e., the router's IP on the given port
+            "dst": srcif,  # Example: 134.0.88.77
+            "type": "no route",
+            "msg": {}
+        }
+        self.send(srcif, json.dumps(themsg))
+
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='route packets')
