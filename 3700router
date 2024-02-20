@@ -8,7 +8,7 @@ class Router:
     relations = {}
     sockets = {}
     ports = {}
-    revocation_table= []
+
 
     def __init__(self, asn, connections):
         print("Router at AS %s starting up" % asn)
@@ -373,7 +373,11 @@ class Router:
         for remove_entry in msg["msg"]:
             ip_and_netmask_cidr = (remove_entry["network"] + "/" +
                                    str(self.convert_netmask_to_cidr(remove_entry["netmask"])))
-            self.revocation_table.append(self.routing_table.pop(ip_and_netmask_cidr))
+            for i in range(len(self.routing_table[ip_and_netmask_cidr])-1):
+                if self.routing_table[ip_and_netmask_cidr][i][3] == srcif:
+                    self.routing_table[ip_and_netmask_cidr].pop(i)
+                    break
+
 
         forward_message = {
       "src":  self.our_addr(srcif) ,      # Example: 172.65.0.2
