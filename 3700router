@@ -54,7 +54,70 @@ class Router:
 
         return longest_prefix_network
 
-    #def aggregate_table(self):
+    def same_attributes(self, tuple_1, tuple_2):
+        i = 0
+        while i < len(tuple_1):
+            if tuple_1[i] != tuple_2[i]:
+                return False
+        return True
+
+    def aggregate_table(self):
+        # sort keys by ip in ascending order - allows for adjacent prefixes to be next to each other (and because they're in a list, we can use indices)
+        sorted_keys = list(sorted(self.routing_table.keys()))
+        sorted_table = sorted(self.routing_table.items())
+
+        aggregated_table = {}
+
+        i = 0
+        while i < len(sorted_keys):
+            prefix_network, prefix_length = sorted_keys[i].split('/')
+            prefix_network_as_binary = bin(int(''.join(format(int(octet), '08b') for octet in prefix_network.split('.')), 2))
+            prefix_length = int(prefix_length)
+            tuples = self.routing_table.get(sorted_keys[i])
+            print("Tuples:", tuples)
+            prefix_network_best_route = self.get_best_network(self.routing_table.get(sorted_keys[i]))
+
+            j = i + 1
+            while j < len(sorted_keys):
+                next_prefix_network, next_prefix_length = sorted_keys[j].split('/')
+                next_prefix_network_as_binary = bin(int(''.join(format(int(octet), '08b') for octet in next_prefix_network.split('.')), 2))
+                next_prefix_length = int(next_prefix_length)
+                next_prefix_network_best_route = self.get_best_network(self.routing_table.get(sorted_keys[j]))
+                if (prefix_length == next_prefix_length) and prefix_network_best_route[3] == next_prefix_network_best_route[3] and self.same_attributes(prefix_network_best_route, next_prefix_network_best_route):
+                    only_last_bit_differs = ((prefix_network_as_binary >> (32 - prefix_length)) ^ (next_prefix_network_as_binary >> (32 - next_prefix_length))) == 1
+                    if only_last_bit_differs:
+                        aggregated_prefix = f'{prefix_network}/{prefix_length - 1}'
+                        if not isinstance(aggregated_table[aggregated_prefix], list):
+                            aggregated_table[aggregated_prefix] = []
+                        aggregated_table[aggregated_prefix].append(prefix_network_best_route)
+                        i = j + 1
+                    else:
+                        break
+                else:
+                    break
+            
+            if sorted_keys[i] not in aggregated_table.keys():
+                aggregated_table[sorted_keys[i]] = []
+                aggregated_table[sorted_keys[i]].append(prefix_network_best_route)
+            
+            i = i + 1
+       
+        print("Aggregated Table:", aggregated_table)
+        return aggregated_table
+
+
+
+
+
+        
+            
+
+
+
+
+
+
+
         
 
     def our_addr(self, dst):
@@ -104,6 +167,8 @@ class Router:
         }
         #print("process_update sendout_message_test:", sendout_message_test)
         self.forward_update(srcif, sendout_message_test)
+        self.routing_table = self.aggregate_table()
+        print("Routing table:", self.routing_table)
         '''
         for network, next_hop in update_message.items():
             print('in for loop - network:', network)
@@ -440,6 +505,8 @@ class Router:
       "msg": msg["msg"]
     }
         self.forward_update(srcif, forward_message)
+        self.routing_table = self.aggregate_table()
+        print("Routing table:", self.routing_table)
 
     def no_route(self, srcif, msg):
         themsg ={
