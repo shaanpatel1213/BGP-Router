@@ -9,7 +9,6 @@ class Router:
     sockets = {}
     ports = {}
 
-
     def __init__(self, asn, connections):
         print("Router at AS %s starting up" % asn)
         self.asn = asn
