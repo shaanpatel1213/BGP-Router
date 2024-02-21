@@ -65,10 +65,12 @@ class Router:
             if tuple_1[i] != tuple_2[i]:
                 return False
         return True
-
+    
     def aggregate_table(self):
+        print("Routing table before aggregation:", self.routing_table)
         # sort keys by ip in ascending order - allows for adjacent prefixes to be next to each other (and because they're in a list, we can use indices)
         sorted_keys = list(sorted(self.routing_table.keys()))
+        print("sorted_keys:", sorted_keys)
         sorted_table = sorted(self.routing_table.items())
 
         aggregated_table = {}
@@ -88,20 +90,32 @@ class Router:
                 next_prefix_network_as_binary = bin(int(''.join(format(int(octet), '08b') for octet in next_prefix_network.split('.')), 2))
                 next_prefix_length = int(next_prefix_length)
                 next_prefix_network_best_route = self.get_best_network(self.routing_table.get(sorted_keys[j]))
+                print("prefix_length:", prefix_length)
+                print("next_prefix_length:", next_prefix_length)
+                print("prefix_network_best_route[3]:", prefix_network_best_route[3])
+                print("next_prefix_network_best_route[3]:", next_prefix_network_best_route[3])
+                print("prefix_network_as_binary:", prefix_network_as_binary)
+                print("next_prefix_network_as_binary:", next_prefix_network_as_binary)
                 if (prefix_length == next_prefix_length) and prefix_network_best_route[3] == next_prefix_network_best_route[3] and self.same_attributes(prefix_network_best_route, next_prefix_network_best_route):
+                    print("prefix lengths are the same, best routes are equal, and attributes are the same")
                     only_last_bit_differs = ((prefix_network_as_binary >> (32 - prefix_length)) ^ (next_prefix_network_as_binary >> (32 - next_prefix_length))) == 1
                     if only_last_bit_differs:
+                        print("only last bit differs!")
                         aggregated_prefix = f'{prefix_network}/{prefix_length - 1}'
+                        
                         if not isinstance(aggregated_table[aggregated_prefix], list):
                             aggregated_table[aggregated_prefix] = []
                         aggregated_table[aggregated_prefix].append(prefix_network_best_route)
                         i = j + 1
                     else:
+                        print("last bit differed")
                         break
                 else:
+                    print("first if didn't go through")
                     break
             
             if sorted_keys[i] not in aggregated_table.keys():
+                print("Adding directly to aggregated table without coalescing:", prefix_network_best_route)
                 aggregated_table[sorted_keys[i]] = []
                 aggregated_table[sorted_keys[i]].append(prefix_network_best_route)
             
@@ -109,8 +123,7 @@ class Router:
        
         print("Aggregated Table:", aggregated_table)
         return aggregated_table
-
-
+        
 
 
 
@@ -165,6 +178,9 @@ class Router:
         # Add the new routing information to the routing table for the given CIDR
         self.routing_table[ip_and_netmask_cidr].append(new_entry)
 
+        self.routing_table = self.aggregate_table()
+        print("Routing table:", self.routing_table)
+
         # Prepare an update message to be sent out to other neighbors, adding this router's ASN to the AS path
         sendout_message_test = {
             "src": self.our_addr(srcif),  # The router's address on the interface connected to the source
@@ -180,7 +196,7 @@ class Router:
 
         # Forward the updated message to appropriate neighbors based on routing policies
         self.forward_update(srcif, sendout_message_test)
-        self.routing_table = self.aggregate_table()
+        #self.routing_table = self.aggregate_table()
         print("Routing table:", self.routing_table)
         '''
         for network, next_hop in update_message.items():
@@ -432,6 +448,7 @@ class Router:
                 msg = json.loads(msg)
                 # Process the message based on its type
                 if msg.get("type") == "update":
+                    print("running process_update(", srcif, " , ", msg, ")")
                     self.process_update(srcif, msg)  # Process routing update messages
                 elif msg.get("type") == "dump":
                     self.process_dump(msg['src'])  # Process dump requests
