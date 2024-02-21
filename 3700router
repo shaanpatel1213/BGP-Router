@@ -8,6 +8,7 @@ class Router:
     relations = {}
     sockets = {}
     ports = {}
+    update_and_withdraw_messages = []
 
     def __init__(self, asn, connections):
         print("Router at AS %s starting up" % asn)
@@ -52,6 +53,9 @@ class Router:
 
         return longest_prefix_network
 
+    #def aggregate_table(self):
+        
+
     def our_addr(self, dst):
         quads = list(int(qdn) for qdn in dst.split('.'))
         quads[3] = 1
@@ -68,6 +72,8 @@ class Router:
         self.sockets[network].sendto(message.encode('utf-8'), ('localhost', self.ports[network]))
 
     def process_update(self, srcif, update_message):
+        self.update_and_withdraw_messages.append(update_message)
+
         ip_and_netmask_cidr = update_message["msg"]["network"] + "/" + str(self.convert_netmask_to_cidr(update_message["msg"]["netmask"]))
         
         # create tuple 
@@ -122,15 +128,22 @@ class Router:
         #print("this is the routing table", self.routing_table)        
 
     def forward_update(self, source, update_message):
+        if self.relations[source] == "cust":
         #print('kb source:', source)
-        for neighbor in self.sockets.keys():
-            #print('kb neighbor:', neighbor)
-            if neighbor != source:  # Don't send back to the source
-                #print('kb if statement valid:')
-                update_message['src'] = self.our_addr(neighbor)
-                update_message['dst'] = neighbor
-                self.send(neighbor, json.dumps(update_message))
-                #print(f"Forwarded update to neighbor {neighbor}")
+            for neighbor in self.sockets.keys():
+                #print('kb neighbor:', neighbor)
+                if neighbor != source:  # Don't send back to the source
+                    #print('kb if statement valid:')
+                    update_message['src'] = self.our_addr(neighbor)
+                    update_message['dst'] = neighbor
+                    self.send(neighbor, json.dumps(update_message))
+                    #print(f"Forwarded update to neighbor {neighbor}")
+        else:
+            for neighbor in self.sockets.keys():
+                if neighbor != source and self.relations[neighbor] == "cust":
+                    update_message['src'] = self.our_addr(neighbor)
+                    update_message['dst'] = neighbor
+                    self.send(neighbor, json.dumps(update_message))
 
 
     def process_dump(self, dst):
@@ -319,6 +332,43 @@ class Router:
         return lowest_ip_networks[0]
 
 
+    def send_data_msg(self, srcif, msg):
+        print('Relations:', self.relations)
+        cidr_addr = self.find_longest_prefix_match_route(msg["dst"])
+        if cidr_addr not in self.routing_table:
+            print("Sending no route msg to:", srcif, " (because of no cidr address in routing table)")
+            self.no_route(srcif, msg)
+        elif len(self.routing_table[cidr_addr]) == 1:
+            '''if self.relations.get(srcif) == "cust" or self.relations.get(msg["dst"]) == "cust":
+                #print("Only 1 address:", cidr_addrs[0])
+                router_to_send_to = self.routing_table[cidr_addr][0][3]
+                #print("CIDR Address: ", cidr_addrs[0])
+                #print("Message (line 155):", msg)
+                self.send(router_to_send_to, json.dumps(msg))
+                '''
+            dst_router = self.routing_table[cidr_addr][0][3]
+            print('dst_router:', dst_router)
+            if (self.relations.get(srcif) == "peer" or self.relations.get(srcif) == "prov") and (self.relations.get(dst_router) == "peer" or self.relations.get(dst_router) == "prov"):
+                self.no_route(srcif, msg)
+            elif self.relations.get(srcif) == "cust" or self.relations.get(dst_router) == "cust":
+                router_to_send_to = self.routing_table[cidr_addr][0][3]
+                self.send(router_to_send_to, json.dumps(msg))
+
+        elif len(self.routing_table[cidr_addr]) > 1:
+            tuple_list = self.routing_table[cidr_addr]
+            best_network = self.get_best_network(tuple_list)
+            router_to_send_to = best_network[3] #self.routing_table[best_network]["peer"]
+            '''if self.relations.get(srcif) == "cust" or self.relations.get(msg["dst"]) == "cust":
+                self.send(router_to_send_to, json.dumps(msg))
+            '''
+            if (self.relations.get(srcif) == "peer" or self.relations.get(srcif) == "prov") and (self.relations.get(router_to_send_to) == "peer" or self.relations.get(router_to_send_to) == "prov"):
+                self.no_route(srcif)
+            elif self.relations.get(srcif) == "cust" or self.relations.get(router_to_send_to) == "cust":
+                print("Sending msg to:", router_to_send_to, " (because one is cust)")
+                self.send(router_to_send_to, json.dumps(msg))
+        
+
+
     def run(self):
         while True:
             socks = select.select(self.sockets.values(), [], [], 0.1)[0]
@@ -348,8 +398,10 @@ class Router:
                 elif msg["type"] == "withdraw":
                     self.process_withdraw(srcif,msg)
                 elif msg["type"] == "data":
+                    self.send_data_msg(srcif, msg)
                     #print("Message:", msg)
                     #cidr_addr = self.get_best_network(msg["dst"])
+                    '''
                     cidr_addr = self.find_longest_prefix_match_route(msg["dst"])
                     if cidr_addr not in self.routing_table:
                         self.no_route(srcif, msg)
@@ -367,8 +419,10 @@ class Router:
                     # if cidr_addrs is None
                     else:
                         print("Couldn't find router to send to - error")
+                        '''
 
     def process_withdraw(self, srcif, msg):
+        self.update_and_withdraw_messages.append(msg)
         for remove_entry in msg["msg"]:
             ip_and_netmask_cidr = (remove_entry["network"] + "/" +
                                    str(self.convert_netmask_to_cidr(remove_entry["netmask"])))
