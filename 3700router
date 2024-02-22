@@ -60,11 +60,70 @@ class Router:
         return longest_prefix_network
 
     def same_attributes(self, tuple_1, tuple_2):
+        #print("******Same Attr tuple_1:", tuple_1)
+        #print("******Same Attr tuple_2:", tuple_2)
         i = 0
         while i < len(tuple_1):
-            if tuple_1[i] != tuple_2[i]:
-                return False
+            #print("****Same Attr i:", i)
+            if i != 5:
+                if tuple_1[i] != tuple_2[i]:
+                    #print("****Doesn't match at index", i)
+                    return False
+                else:
+                    #print("*****Incrementing i:", i)
+                    i = i + 1
+            else:
+                i = i + 1
         return True
+    
+    # decrements last non-zero octet of netmask by 1
+    def decrement_netmask(self, netmask_address, num_ag):
+        # Split the netmask address into octets
+        octets = netmask_address.split('.')
+
+        # Convert each octet to an integer
+        octets = [int(octet) for octet in octets]
+
+        for i in range(len(octets) - 1, -1, -1):
+            if octets[i] > 0:
+                octets[i] -= num_ag
+                break
+            else:
+                continue
+
+        # Convert the octets back to a dotted-decimal netmask address
+        new_netmask_address = '.'.join(str(octet) for octet in octets)
+
+        return new_netmask_address
+    
+    def do_all_bits_match_except_last(self, binary_1, binary_2):
+        if len(binary_1) != len(binary_2):
+            return False
+        # check if every bit except for the last one is the same
+        if binary_1[:-1] == binary_2[:-1]:
+            # check if the last bits are different
+            if binary_1[-1] != binary_2[-1]:
+                # if so, return true
+                return True
+        # otherwise, false
+        return False
+    
+    def get_new_subnet_mask(self, prefix_length):
+        mask = ""
+        for i in range(1, 33):
+            if(i < prefix_length):
+                mask += "1"
+                print("MASK:", mask)
+            else: 
+                mask += "0"
+                print("MASK:", mask)
+            if(i != 0 and i != 32 and i % 8 == 0):
+                mask += "."
+                print("MASK:", mask)
+        print("MASK BEFORE LIST:", mask)
+        mask = '.'.join(map(str, [int(octet, 2) for octet in mask.split('.')]))
+        return mask
+
     
     def aggregate_table(self):
         print("Routing table before aggregation:", self.routing_table)
@@ -74,52 +133,83 @@ class Router:
         sorted_table = sorted(self.routing_table.items())
 
         aggregated_table = {}
-
+        do_not_add = []
         i = 0
         while i < len(sorted_keys):
             prefix_network, prefix_length = sorted_keys[i].split('/')
-            prefix_network_as_binary = bin(int(''.join(format(int(octet), '08b') for octet in prefix_network.split('.')), 2))
+            print("prefix network", prefix_network)
+            prefix_network_octets = [int(octet) for octet in prefix_network.split('.')]
+            prefix_network_binary_strings = [bin(octet)[2:].zfill(8) for octet in prefix_network_octets]
+            prefix_network_as_binary = ''.join(prefix_network_binary_strings)
+            #prefix_network_as_binary = [int(bin_str, 2) for bin_str in prefix_network_binary_strings]
+            print("Prefix network as binary", prefix_network_as_binary)
+            #prefix_network_as_binary = 
+            #prefix_network_as_binary = bin(int(''.join(format(int(octet), '08b') for octet in prefix_network.split('.')), 2))
             prefix_length = int(prefix_length)
+            bitshifted_pnab = prefix_network_as_binary[:prefix_length] 
+            print(bitshifted_pnab)
             tuples = self.routing_table.get(sorted_keys[i])
             print("Tuples:", tuples)
             prefix_network_best_route = self.get_best_network(self.routing_table.get(sorted_keys[i]))
 
             j = i + 1
             while j < len(sorted_keys):
+                num_ag = 0
                 next_prefix_network, next_prefix_length = sorted_keys[j].split('/')
-                next_prefix_network_as_binary = bin(int(''.join(format(int(octet), '08b') for octet in next_prefix_network.split('.')), 2))
+                print("Next prefix network:", next_prefix_network)
+                next_prefix_network_octets = [int(octet) for octet in next_prefix_network.split('.')]
+                next_prefix_network_binary_strings = [bin(octet)[2:].zfill(8) for octet in next_prefix_network_octets]
+                next_prefix_network_as_binary = ''.join(next_prefix_network_binary_strings)
+                print("Next Prefix network as binary", next_prefix_network_as_binary)
+                #next_prefix_network_as_binary = bin(int(''.join(format(int(octet), '08b') for octet in next_prefix_network.split('.')), 2))
                 next_prefix_length = int(next_prefix_length)
                 next_prefix_network_best_route = self.get_best_network(self.routing_table.get(sorted_keys[j]))
                 print("prefix_length:", prefix_length)
                 print("next_prefix_length:", next_prefix_length)
                 print("prefix_network_best_route[3]:", prefix_network_best_route[3])
                 print("next_prefix_network_best_route[3]:", next_prefix_network_best_route[3])
-                print("prefix_network_as_binary:", prefix_network_as_binary)
-                print("next_prefix_network_as_binary:", next_prefix_network_as_binary)
-                if (prefix_length == next_prefix_length) and prefix_network_best_route[3] == next_prefix_network_best_route[3] and self.same_attributes(prefix_network_best_route, next_prefix_network_best_route):
-                    print("prefix lengths are the same, best routes are equal, and attributes are the same")
-                    only_last_bit_differs = ((prefix_network_as_binary >> (32 - prefix_length)) ^ (next_prefix_network_as_binary >> (32 - next_prefix_length))) == 1
-                    if only_last_bit_differs:
-                        print("only last bit differs!")
-                        aggregated_prefix = f'{prefix_network}/{prefix_length - 1}'
-                        
-                        if not isinstance(aggregated_table[aggregated_prefix], list):
-                            aggregated_table[aggregated_prefix] = []
-                        aggregated_table[aggregated_prefix].append(prefix_network_best_route)
-                        i = j + 1
-                    else:
-                        print("last bit differed")
-                        break
+                bitshifted_npnab = next_prefix_network_as_binary[:next_prefix_length]
+                print("Bitshifted prefix_network_as_binary:", bitshifted_pnab)
+                print("Bitshifted next_prefix_network_as_binary:", bitshifted_npnab)
+                prefix_lengths_equal = (prefix_length == next_prefix_length)
+                all_bits_match_except_last = self.do_all_bits_match_except_last(bitshifted_pnab, bitshifted_npnab)
+                same_port = (prefix_network_best_route[3] == next_prefix_network_best_route[3])
+                print("prefix lengths equal:", prefix_lengths_equal)
+                print("all_bits_match_except_last:", all_bits_match_except_last)
+                print("same_port:", same_port)
+                same_attributes = self.same_attributes(prefix_network_best_route, next_prefix_network_best_route)
+                print("same_attributes:", same_attributes)
+                if prefix_lengths_equal and all_bits_match_except_last and same_port and same_attributes:
+                    num_ag+=1
+                    print("prefix lengths are the same, best route are equal, and attributes are the same")
+                    print("only last bit differs!")
+                    aggregated_prefix = f'{prefix_network}/{prefix_length - 1}'
+                    print("***PNBR[6]:", prefix_network_best_route[6])
+                    # PROBLEM: DECREMENTING IS NOT ENOUGH, E
+                    decremented_netmask = self.get_new_subnet_mask(prefix_length) #self.decrement_netmask(prefix_network_best_route[6], num_ag)
+                    aggregated_entry = (prefix_network_best_route[0], prefix_network_best_route[1], prefix_network_best_route[2], prefix_network_best_route[3], prefix_network_best_route[4], prefix_network_best_route[5], decremented_netmask)
+                    print("aggregated_entry:", aggregated_entry)
+                    if aggregated_table.get(aggregated_prefix) is None or not isinstance(aggregated_table[aggregated_prefix], list):
+                        aggregated_table[aggregated_prefix] = []
+                    aggregated_table[aggregated_prefix].append(aggregated_entry)
+                    do_not_add.append(sorted_keys[i])
+                    do_not_add.append(sorted_keys[j])
+                    j = j + 1
+                    #i = j + 1
+                    print("j =", j)
                 else:
-                    print("first if didn't go through")
+                    print("if was false")
+                    num_ag = 0
                     break
             
-            if sorted_keys[i] not in aggregated_table.keys():
+            if sorted_keys[i] not in do_not_add:
                 print("Adding directly to aggregated table without coalescing:", prefix_network_best_route)
                 aggregated_table[sorted_keys[i]] = []
                 aggregated_table[sorted_keys[i]].append(prefix_network_best_route)
-            
             i = i + 1
+            print("i =", i)
+                
+            
        
         print("Aggregated Table:", aggregated_table)
         return aggregated_table
@@ -179,7 +269,9 @@ class Router:
         self.routing_table[ip_and_netmask_cidr].append(new_entry)
 
         self.routing_table = self.aggregate_table()
-        print("Routing table:", self.routing_table)
+        for key, value in self.routing_table.items():
+            print("RT Key:", key)
+            print("RT Value:", value)
 
         # Prepare an update message to be sent out to other neighbors, adding this router's ASN to the AS path
         sendout_message_test = {
@@ -196,8 +288,7 @@ class Router:
 
         # Forward the updated message to appropriate neighbors based on routing policies
         self.forward_update(srcif, sendout_message_test)
-        #self.routing_table = self.aggregate_table()
-        print("Routing table:", self.routing_table)
+        
         '''
         for network, next_hop in update_message.items():
             print('in for loop - network:', network)
@@ -396,6 +487,8 @@ class Router:
         # Finally, apply the lowest IP address tie-break
         lowest_ip_networks = self.get_lowest_ip_network(best_origin_tie_break)
         if len(lowest_ip_networks) != 1:
+            print("******len(lowest_ip_networks):", len(lowest_ip_networks))
+
             return None  # Return None if tie-breaking fails to identify a single best network
 
         return lowest_ip_networks[0]  # Return the best network based on the applied criteria
